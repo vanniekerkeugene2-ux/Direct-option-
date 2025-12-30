@@ -1,0 +1,5 @@
+{
+  "name": "Direct Option: Binary Strategy Companion",
+  "description": "An AI-powered trading dashboard for binary options.",
+  "requestFramePermissions": []
+}

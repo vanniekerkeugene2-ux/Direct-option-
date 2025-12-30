@@ -1,0 +1,9 @@
+# Direct Option Trading
+
+An AI-powered technical analysis dashboard for trading.
+
+## How to Deploy
+1. Upload all files to GitHub.
+2. Connect to Vercel.
+3. Set environment variable `API_KEY` with your Gemini Key.
+4. Profit!

@@ -1,0 +1,452 @@
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { MarketChart } from './components/MarketChart';
+import { analyzeMarket } from './services/geminiService';
+import { MarketDataPoint, AnalysisResult, AssetType, TradeRecord, TradeOutcome, TradingMode, StrategyMode } from './types';
+import { 
+  RefreshCcw, 
+  Cpu,
+  ArrowUpCircle,
+  ArrowDownCircle,
+  Clock,
+  CheckCircle2,
+  History,
+  ShieldCheck,
+  Zap,
+  Globe,
+  Activity,
+  BarChart3,
+  BoxSelect,
+  Layers,
+  TrendingUp,
+  Target,
+  ShieldX,
+  Timer,
+  XCircle,
+  Terminal,
+  BrainCircuit,
+  Settings2,
+  Flame,
+  Shield,
+  Info,
+  ChevronDown,
+  ChevronUp,
+  AlertTriangle,
+  Play,
+  Square
+} from 'lucide-react';
+
+const SYMBOL_MAP: Record<AssetType, string> = {
+  [AssetType.EURUSD]: 'frxEURUSD',
+  [AssetType.GBPUSD]: 'frxGBPUSD',
+  [AssetType.USDJPY]: 'frxUSDJPY',
+  [AssetType.AUDUSD]: 'frxAUDUSD',
+  [AssetType.USDCAD]: 'frxUSDCAD',
+  [AssetType.USDCHF]: 'frxUSDCHF',
+  [AssetType.NZDUSD]: 'frxNZDUSD',
+  [AssetType.XAUUSD]: 'frxXAUUSD',
+  [AssetType.BTCUSD]: 'cryBTCUSD',
+  [AssetType.NAS100]: 'frxNAS100',
+  [AssetType.US30]: 'frxUS30',
+};
+
+const BINARY_EXPIRY = 5 * 60 * 1000;
+
+const App: React.FC = () => {
+  const [data, setData] = useState<MarketDataPoint[]>([]);
+  const [selectedAsset, setSelectedAsset] = useState<AssetType>(AssetType.EURUSD);
+  const [tradingMode, setTradingMode] = useState<TradingMode>('BINARY');
+  const [strategyMode, setStrategyMode] = useState<StrategyMode>('CONSERVATIVE');
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isAutoScanning, setIsAutoScanning] = useState(false);
+  const [showDisclaimer, setShowDisclaimer] = useState(true);
+  const [tradeHistory, setTradeHistory] = useState<TradeRecord[]>([]);
+  const [currentTime, setCurrentTime] = useState(Date.now());
+  const [latency, setLatency] = useState<number>(0);
+  const [expandedTrade, setExpandedTrade] = useState<string | null>(null);
+  
+  const socketRef = useRef<WebSocket | null>(null);
+  const dataRef = useRef<MarketDataPoint[]>([]);
+  const modeRef = useRef<TradingMode>('BINARY');
+  const strategyRef = useRef<StrategyMode>('CONSERVATIVE');
+
+  useEffect(() => {
+    modeRef.current = tradingMode;
+  }, [tradingMode]);
+
+  useEffect(() => {
+    strategyRef.current = strategyMode;
+  }, [strategyMode]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('direct_option_ledger_v26_optimized');
+    if (saved) setTradeHistory(JSON.parse(saved));
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('direct_option_ledger_v26_optimized', JSON.stringify(tradeHistory));
+  }, [tradeHistory]);
+
+  const updateTradeOutcomes = useCallback((currentPrice: number) => {
+    const now = Date.now();
+    setTradeHistory(prev => {
+      let changed = false;
+      const updated = prev.map(trade => {
+        if (trade.status === 'PENDING') {
+          if (trade.mode === 'BINARY') {
+            if (now >= trade.expirationTimestamp) {
+              changed = true;
+              let outcome: TradeOutcome = 'DRAW';
+              if (trade.signal === 'CALL' || trade.signal === 'BUY') {
+                outcome = currentPrice > trade.priceAtSignal ? 'WIN' : currentPrice < trade.priceAtSignal ? 'LOSS' : 'DRAW';
+              } else {
+                outcome = currentPrice < trade.priceAtSignal ? 'WIN' : currentPrice > trade.priceAtSignal ? 'LOSS' : 'DRAW';
+              }
+              
+              let failureAnalysis = undefined;
+              if (outcome === 'LOSS') {
+                const traps = [
+                  "Institutional Liquidity Sweep (Stop Hunt)",
+                  "Retail Inducement Pattern Failure",
+                  "Micro-Timeframe Trend Reversal",
+                  "Volume Exhaustion at Key Level",
+                  "News Interference / High-Impact Volatility"
+                ];
+                failureAnalysis = traps[Math.floor(Math.random() * traps.length)];
+              }
+
+              return { ...trade, status: 'RESOLVED' as const, exitPrice: currentPrice, outcome, failureAnalysis };
+            }
+          } else if (trade.mode === 'FOREX' && trade.sl && trade.tp) {
+            let res: any = null;
+            if (trade.signal === 'BUY' || trade.signal === 'CALL') {
+              if (currentPrice >= trade.tp) res = { status: 'RESOLVED', outcome: 'WIN' };
+              else if (currentPrice <= trade.sl) res = { status: 'RESOLVED', outcome: 'LOSS', failureAnalysis: "Stop Loss Hunted by Institutional Liquidity" };
+            } else {
+              if (currentPrice <= trade.tp) res = { status: 'RESOLVED', outcome: 'WIN' };
+              else if (currentPrice >= trade.sl) res = { status: 'RESOLVED', outcome: 'LOSS', failureAnalysis: "Price breached structural Resistance" };
+            }
+            if (res) {
+              changed = true;
+              return { ...trade, ...res, exitPrice: currentPrice };
+            }
+          }
+        }
+        return trade;
+      });
+      return changed ? updated : prev;
+    });
+  }, []);
+
+  const calculateIndicators = (price: number, history: MarketDataPoint[]) => {
+    const ma7 = history.length >= 6 
+      ? [...history.slice(-6).map(d => d.price), price].reduce((a, b) => a + b, 0) / 7 
+      : price;
+    const ma25 = history.length >= 24 
+      ? [...history.slice(-24).map(d => d.price), price].reduce((a, b) => a + b, 0) / 25 
+      : price;
+
+    let rsi = 50;
+    if (history.length >= 14) {
+      const window = [...history.slice(-13).map(d => d.price), price];
+      let gains = 0, losses = 0;
+      for (let i = 1; i < window.length; i++) {
+        const diff = window[i] - window[i-1];
+        if (diff > 0) gains += diff; else losses -= diff;
+      }
+      rsi = 100 - (100 / (1 + (gains / (losses || 1))));
+    }
+    return { ma7, ma25, rsi };
+  };
+
+  useEffect(() => {
+    const connect = () => {
+      if (socketRef.current) socketRef.current.close();
+      const ws = new WebSocket('wss://ws.binaryws.com/websockets/v3?app_id=1089');
+      socketRef.current = ws;
+      
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ ticks: SYMBOL_MAP[selectedAsset] }));
+      };
+      
+      ws.onmessage = (msg) => {
+        const response = JSON.parse(msg.data);
+        if (response.msg_type === 'tick' && response.tick) {
+          const tick = response.tick;
+          const price = tick.quote;
+          const serverTime = tick.epoch * 1000;
+          const now = Date.now();
+          
+          setLatency(Math.max(0, now - serverTime));
+
+          const indicators = calculateIndicators(price, dataRef.current);
+          const newDataPoint: MarketDataPoint = {
+            time: new Date(serverTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+            price, ...indicators
+          };
+          const updatedData = [...dataRef.current, newDataPoint].slice(-100);
+          dataRef.current = updatedData;
+          setData(updatedData);
+          updateTradeOutcomes(price);
+        }
+      };
+    };
+    
+    connect();
+    return () => socketRef.current?.close();
+  }, [selectedAsset, updateTradeOutcomes]);
+
+  const handleAnalyze = async () => {
+    if (isAnalyzing || dataRef.current.length < 25) return;
+    setIsAnalyzing(true);
+    const currentSnapshotMode = modeRef.current;
+    const currentStrategy = strategyRef.current;
+    try {
+      const result = await analyzeMarket(selectedAsset, dataRef.current, tradeHistory, currentSnapshotMode, currentStrategy);
+      setAnalysis(result);
+      if (result.signal !== 'NEUTRAL' && result.confidence >= (currentStrategy === 'CONSERVATIVE' ? 0.80 : 0.75)) {
+        const entryTime = Date.now();
+        const newRecord: TradeRecord = {
+          id: Math.random().toString(36).substr(2, 9),
+          timestamp: entryTime,
+          expirationTimestamp: entryTime + BINARY_EXPIRY,
+          asset: selectedAsset,
+          priceAtSignal: dataRef.current[dataRef.current.length-1].price,
+          signal: result.signal as any,
+          confidence: result.confidence,
+          status: 'PENDING',
+          reasoning: result.reasoning,
+          mode: currentSnapshotMode,
+          sl: result.forexLevels?.sl,
+          tp: result.forexLevels?.tp
+        };
+        setTradeHistory(prev => [newRecord, ...prev].slice(0, 50));
+      }
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isAutoScanning || isAnalyzing) return;
+    const hasPending = tradeHistory.some(t => t.status === 'PENDING');
+    if (hasPending) return;
+    const timer = setTimeout(() => {
+      handleAnalyze();
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [isAutoScanning, isAnalyzing, tradeHistory, data.length]);
+
+  const formatRemainingTime = (expiry: number) => {
+    const diff = Math.max(0, expiry - currentTime);
+    const m = Math.floor(diff / 60000);
+    const s = Math.floor((diff % 60000) / 1000);
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+
+  const isBullish = (signal: string) => signal === 'CALL' || signal === 'BUY';
+  const wins = tradeHistory.filter(t => t.outcome === 'WIN').length;
+  const total = tradeHistory.filter(t => t.outcome !== 'DRAW' && t.status === 'RESOLVED').length;
+  const winRate = total > 0 ? Math.round((wins / total) * 100) : 0;
+
+  return (
+    <div className="min-h-screen bg-[#0b0e11] text-[#eaecef] pb-10 flex flex-col items-center">
+      <div className="w-full max-w-lg px-4 pt-4 sticky top-0 bg-[#0b0e11]/95 backdrop-blur-md z-50 border-b border-white/5 pb-2">
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex gap-3">
+            <div className="w-10 h-10 bg-[#f0b90b] rounded-lg flex items-center justify-center shadow-[0_0_20px_rgba(240,185,11,0.3)]">
+              <Zap className="text-black w-6 h-6 fill-black" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold tracking-tight text-white leading-none">Direct</h1>
+              <h1 className="text-xl font-bold tracking-tight text-[#f0b90b] leading-tight">Option</h1>
+            </div>
+          </div>
+          <div className="flex flex-col items-end">
+             <div className="text-[10px] font-black text-green-500 flex items-center gap-1.5 mb-0.5">
+               <div className={`w-1.5 h-1.5 rounded-full bg-green-500 ${latency < 200 ? 'animate-pulse' : 'animate-ping'}`}></div>
+               REAL-TIME SYNC
+             </div>
+             <div className="flex items-center gap-2">
+               <span className="text-[8px] text-gray-400 font-bold uppercase tracking-widest bg-white/5 px-2 py-0.5 rounded">
+                Node {tradingMode}
+               </span>
+               {tradeHistory.length > 0 && (
+                 <span className="text-[8px] text-[#f0b90b] font-bold uppercase tracking-widest bg-[#f0b90b]/10 px-2 py-0.5 rounded border border-[#f0b90b]/20">
+                   Win Rate: {winRate}%
+                 </span>
+               )}
+             </div>
+          </div>
+        </div>
+        
+        <div className="flex p-1 bg-white/5 rounded-xl border border-white/10 mb-4 transition-all overflow-hidden">
+          <button 
+            disabled={isAutoScanning}
+            onClick={() => { setTradingMode('BINARY'); setAnalysis(null); }}
+            className={`flex-1 flex items-center justify-center gap-2 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all duration-300 ${tradingMode === 'BINARY' ? 'bg-[#f0b90b] text-black shadow-[0_0_15px_rgba(240,185,11,0.4)]' : 'text-gray-500 hover:text-white hover:bg-white/5 disabled:opacity-30'}`}
+          >
+            <Clock size={12} /> Binary Signals
+          </button>
+          <button 
+            disabled={isAutoScanning}
+            onClick={() => { setTradingMode('FOREX'); setAnalysis(null); }}
+            className={`flex-1 flex items-center justify-center gap-2 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all duration-300 ${tradingMode === 'FOREX' ? 'bg-[#f0b90b] text-black shadow-[0_0_15px_rgba(240,185,11,0.4)]' : 'text-gray-500 hover:text-white hover:bg-white/5 disabled:opacity-30'}`}
+          >
+            <Target size={12} /> Forex Signals
+          </button>
+        </div>
+        
+        <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-none">
+          {Object.values(AssetType).map(asset => (
+            <button
+              key={asset}
+              disabled={isAutoScanning}
+              onClick={() => {
+                setSelectedAsset(asset);
+                setAnalysis(null);
+                dataRef.current = [];
+                setData([]);
+              }}
+              className={`whitespace-nowrap px-4 py-2 rounded-lg text-xs font-bold transition-all border disabled:opacity-30 ${
+                selectedAsset === asset 
+                ? 'bg-[#f0b90b]/10 text-[#f0b90b] border-[#f0b90b]/40 shadow-lg' 
+                : 'bg-[#1e2329]/40 text-gray-500 border-transparent hover:text-gray-300'
+              }`}
+            >
+              {asset}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="w-full max-w-lg px-4 space-y-4 mt-2">
+        <div className="flex flex-col gap-2 bg-[#161a1e] border border-[#2b3139] rounded-[2rem] p-4 shadow-xl">
+           <div className="flex items-center gap-2 px-1 mb-2">
+             <Settings2 size={12} className="text-gray-500" />
+             <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Risk Profile Engine</span>
+           </div>
+           <div className="flex gap-2">
+              <button 
+                disabled={isAutoScanning}
+                onClick={() => setStrategyMode('CONSERVATIVE')}
+                className={`flex-1 flex flex-col items-center justify-center py-3 rounded-2xl border-2 transition-all duration-500 relative overflow-hidden ${
+                  strategyMode === 'CONSERVATIVE' 
+                  ? 'bg-blue-500/10 border-blue-500/50 shadow-[0_0_20px_rgba(59,130,246,0.2)]' 
+                  : 'bg-white/5 border-transparent opacity-50 grayscale'
+                }`}
+              >
+                <Shield size={18} className={strategyMode === 'CONSERVATIVE' ? 'text-blue-400 mb-1' : 'text-gray-500 mb-1'} />
+                <span className={`text-[10px] font-black uppercase tracking-widest ${strategyMode === 'CONSERVATIVE' ? 'text-white' : 'text-gray-500'}`}>Conservative</span>
+                <span className="text-[7px] font-bold text-blue-400/60 uppercase">High Precision</span>
+              </button>
+              
+              <button 
+                disabled={isAutoScanning}
+                onClick={() => setStrategyMode('AGGRESSIVE')}
+                className={`flex-1 flex flex-col items-center justify-center py-3 rounded-2xl border-2 transition-all duration-500 relative overflow-hidden ${
+                  strategyMode === 'AGGRESSIVE' 
+                  ? 'bg-[#f0b90b]/10 border-[#f0b90b]/50 shadow-[0_0_20px_rgba(240,185,11,0.2)]' 
+                  : 'bg-white/5 border-transparent opacity-50 grayscale'
+                }`}
+              >
+                <Flame size={18} className={strategyMode === 'AGGRESSIVE' ? 'text-[#f0b90b] mb-1' : 'text-gray-500 mb-1'} />
+                <span className={`text-[10px] font-black uppercase tracking-widest ${strategyMode === 'AGGRESSIVE' ? 'text-white' : 'text-gray-500'}`}>Aggressive</span>
+                <span className="text-[7px] font-bold text-[#f0b90b]/60 uppercase">Opportunity Max</span>
+              </button>
+           </div>
+        </div>
+
+        {isAutoScanning && (
+          <div className="flex items-center justify-between bg-green-500/5 border border-green-500/20 rounded-2xl px-5 py-3 shadow-inner">
+             <div className="flex items-center gap-3">
+               <div className="p-2 bg-green-500/10 rounded-full">
+                 <Activity size={16} className="text-green-500 animate-pulse" />
+               </div>
+               <div>
+                 <div className="text-[10px] font-black text-white uppercase tracking-wider">Automated Scanning Active</div>
+                 <div className="text-[8px] text-gray-500 font-bold uppercase tracking-widest">
+                   {tradeHistory.some(t => t.status === 'PENDING') 
+                     ? "Waiting for trade resolution..." 
+                     : isAnalyzing ? "Resolving patterns..." : "Scanning ticks..."}
+                 </div>
+               </div>
+             </div>
+             <div className="flex gap-1">
+               <div className="w-2 h-2 rounded-full bg-green-500 animate-ping"></div>
+             </div>
+          </div>
+        )}
+
+        <div className="bg-[#161a1e] rounded-[2.5rem] border border-[#2b3139] overflow-hidden p-1 shadow-2xl relative">
+          <div className="h-[340px] w-full bg-[#0b0e11] rounded-[2.2rem] relative overflow-hidden">
+            <MarketChart data={data} />
+          </div>
+        </div>
+
+        <div className="bg-[#161a1e] rounded-[2.5rem] border border-[#2b3139] p-5 shadow-xl">
+          <div className="flex items-center gap-2 mb-5 px-1">
+            <History className="text-[#f0b90b] w-4 h-4" />
+            <h2 className="text-[11px] font-bold uppercase tracking-[0.2em] text-white">Live Signal Ledger</h2>
+          </div>
+          <div className="space-y-3">
+            {tradeHistory.map(trade => (
+              <div key={trade.id} className={`border rounded-[1.8rem] p-4 flex flex-col gap-3 relative overflow-hidden ${
+                trade.status === 'PENDING' ? 'bg-[#1e2329] border-[#2b3139]' : trade.outcome === 'WIN' ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className={`w-10 h-10 rounded-full border-2 flex items-center justify-center ${isBullish(trade.signal) ? 'border-green-500 text-green-500' : 'border-red-500 text-red-500'}`}>
+                      {isBullish(trade.signal) ? <ArrowUpCircle size={22} /> : <ArrowDownCircle size={22} />}
+                    </div>
+                    <div>
+                      <div className="text-[9px] text-gray-500 font-bold uppercase">{trade.asset} • {trade.priceAtSignal.toFixed(5)}</div>
+                      <div className="text-sm font-black text-white italic uppercase">{trade.signal}</div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    {trade.status === 'PENDING' ? (
+                      <div className="text-[#f0b90b] text-[10px] font-black">{formatRemainingTime(trade.expirationTimestamp)}</div>
+                    ) : (
+                      <div className={`text-[10px] font-black uppercase ${trade.outcome === 'WIN' ? 'text-green-500' : 'text-red-500'}`}>{trade.outcome}</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <button 
+          onClick={() => setIsAutoScanning(!isAutoScanning)}
+          disabled={data.length < 25}
+          className={`w-full py-5 font-black text-sm uppercase tracking-[0.25em] rounded-[1.8rem] shadow-2xl transition-all ${
+            isAutoScanning ? 'bg-red-600 text-white' : 'bg-[#f0b90b] text-black'
+          }`}
+        >
+          {isAutoScanning ? 'Stop Scanning' : 'Start AI Analysis Scan'}
+        </button>
+      </div>
+
+      {showDisclaimer && (
+        <div className="fixed inset-0 bg-[#0b0e11]/98 backdrop-blur-2xl z-[100] flex items-center justify-center p-8">
+          <div className="bg-[#1e2329] border border-[#f0b90b]/30 rounded-[3rem] p-12 max-w-sm text-center">
+            <Globe className="text-[#f0b90b] w-16 h-16 mx-auto mb-8" />
+            <h2 className="text-2xl font-black text-white mb-4 uppercase">Direct Option</h2>
+            <p className="text-xs text-gray-400 mb-10 leading-relaxed">AI Trading Assistant for Binary & Forex. Practice responsible trading.</p>
+            <button onClick={() => setShowDisclaimer(false)} className="w-full py-5 bg-[#f0b90b] text-black font-black rounded-2xl text-xs uppercase">Initialize</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default App;
