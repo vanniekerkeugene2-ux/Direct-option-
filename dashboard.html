@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IPDA Trading Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <h1>IPDA Trading Dashboard</h1>
+    </header>
+    <main>
+        <div id="chart-container">
+            <canvas id="candlestick-chart"></canvas>
+        </div>
+        <div id="analysis">
+            <h2>Real-time Analysis</h2>
+            <div id="trading-signals">
+                <h3>Trading Signals</h3>
+                <ul id="signals-list"></ul>
+            </div>
+        </div>
+    </main>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.1/chart.min.js"></script>
+    <script src="main.js"></script>
+</body>
+</html>
+
+/* styles.css */
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f4f4f4;
+    color: #333;
+    margin: 0;
+    padding: 0;
+}
+
+header {
+    background: #007BFF;
+    color: white;
+    padding: 20px;
+    text-align: center;
+}
+
+#chart-container {
+    margin: 20px;
+}
+
+/* main.js */
+const ctx = document.getElementById('candlestick-chart').getContext('2d');
+const candlestickChart = new Chart(ctx, {
+    type: 'candlestick',
+    data: {},
+    options: {
+        responsive: true,
+        scales: {
+            x: {
+                type: 'time',
+                time: {
+                    unit: 'minute'
+                }
+            },
+            y: {
+                beginAtZero: false,
+            }
+        }
+    }
+});
+
+function fetchTradingData() {
+    // Simulated data fetching. Replace with actual API call.
+    return [{
+        time: '2026-04-21T18:45:00Z',
+        open: 1.1,
+        high: 1.2,
+        low: 1.0,
+        close: 1.15
+    }];
+}
+
+function updateChart() {
+    const data = fetchTradingData();
+    candlestickChart.data = {
+        datasets: [{
+            label: 'Forex Data',
+            data: data
+        }]
+    };
+    candlestickChart.update();
+}
+
+setInterval(updateChart, 60000); // Update every minute
